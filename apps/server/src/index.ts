@@ -1,6 +1,8 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { MENU_ITEMS, MENU_CATEGORIES } from '@bistro/shared';
+import parseOrderRouter from './routes/parseOrder';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -16,16 +18,10 @@ app.get('/menu', (_req, res) => {
   res.json({ items: MENU_ITEMS, categories: MENU_CATEGORIES });
 });
 
-app.get('/menu/:category', (req, res) => {
-  const { category } = req.params;
-  const items = MENU_ITEMS.filter((item) => item.category === category);
-  if (items.length === 0) {
-    res.status(404).json({ error: 'Category not found' });
-    return;
-  }
-  res.json({ items });
-});
+app.use('/parse-order', parseOrderRouter);
 
 app.listen(PORT, () => {
+  const hasKey = !!process.env.ANTHROPIC_API_KEY;
   console.log(`🍔 Bistro server running on http://localhost:${PORT}`);
+  console.log(`🤖 AI: ${hasKey ? 'Claude (Haiku)' : 'Fallback parser (set ANTHROPIC_API_KEY to enable Claude)'}`);
 });

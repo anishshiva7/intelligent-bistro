@@ -1,14 +1,13 @@
-import React, { useState, useRef } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
   ScrollView,
   TouchableOpacity,
   FlatList,
-  SafeAreaView,
   TextInput,
-  Pressable,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { MENU_ITEMS, MENU_CATEGORIES } from '../../constants/menu';
 import { MenuItemCard } from '../../components/MenuItemCard';
 import { MenuCategory } from '@bistro/shared';
