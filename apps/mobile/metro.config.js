@@ -16,9 +16,14 @@ config.resolver.nodeModulesPaths = [
   path.resolve(workspaceRoot, 'node_modules'),
 ];
 
-// Allow importing from packages/shared without building
+// Pin singleton packages to the app's node_modules to prevent duplicate instances
+// when Metro also searches the workspace root (which has its own copies).
+const appNodeModules = path.resolve(projectRoot, 'node_modules');
 config.resolver.extraNodeModules = {
   '@bistro/shared': path.resolve(workspaceRoot, 'packages/shared/src'),
+  'react': path.resolve(appNodeModules, 'react'),
+  'react-dom': path.resolve(appNodeModules, 'react-dom'),
+  'react-native': path.resolve(appNodeModules, 'react-native'),
 };
 
 module.exports = withNativeWind(config, { input: './global.css' });
