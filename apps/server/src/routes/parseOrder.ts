@@ -9,32 +9,43 @@ const router = Router();
 const client = new Anthropic();
 
 router.post('/', async (req: Request, res: Response) => {
-  // Validate request body
   const parsed = ParseOrderRequestSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: 'Invalid request', details: parsed.error.flatten() });
     return;
   }
 
-  const { message, cartItems } = parsed.data;
+  const { message, cartItems, conversationHistory } = parsed.data;
 
-  // Skip AI if no API key configured
   if (!process.env.ANTHROPIC_API_KEY) {
-    res.json(fallbackParse(message));
+    res.json(fallbackParse(message, cartItems, conversationHistory));
     return;
   }
 
   try {
+    // Build alternating message array from history + current turn.
+    // Anthropic requires messages to start with 'user' and alternate roles.
+    const rawHistory = conversationHistory ?? [];
+    const apiMessages: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+
+    for (const turn of rawHistory) {
+      apiMessages.push({ role: turn.role, content: turn.text });
+    }
+    apiMessages.push({ role: 'user', content: message });
+
+    // Strip any leading assistant turns (Anthropic requires first turn = user)
+    while (apiMessages.length > 0 && apiMessages[0].role !== 'user') {
+      apiMessages.shift();
+    }
+
     const response = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 512,
       system: buildSystemPrompt(cartItems),
-      messages: [{ role: 'user', content: message }],
+      messages: apiMessages,
     });
 
     const raw = response.content[0].type === 'text' ? response.content[0].text.trim() : '';
-
-    // Strip any accidental markdown fences
     const jsonText = raw.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim();
 
     const aiResult = JSON.parse(jsonText);
@@ -43,13 +54,12 @@ router.post('/', async (req: Request, res: Response) => {
     if (validated.success) {
       res.json(validated.data);
     } else {
-      // AI returned invalid shape — fall back gracefully
       console.warn('[parse-order] Zod validation failed, using fallback:', validated.error.flatten());
-      res.json(fallbackParse(message));
+      res.json(fallbackParse(message, cartItems, conversationHistory));
     }
   } catch (err) {
     console.error('[parse-order] AI error, using fallback:', err);
-    res.json(fallbackParse(message));
+    res.json(fallbackParse(message, cartItems, conversationHistory));
   }
 });
 

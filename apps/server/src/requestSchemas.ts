@@ -15,7 +15,13 @@ const CartItemSchema = z.object({
   modifiers: z.array(z.string()),
 });
 
+const ConversationTurnSchema = z.object({
+  role: z.enum(['user', 'assistant']),
+  text: z.string().max(2000),
+});
+
 export const ParseOrderRequestSchema = z.object({
   message: z.string().min(1).max(500),
   cartItems: z.array(CartItemSchema).default([]),
+  conversationHistory: z.array(ConversationTurnSchema).max(20).optional(),
 });

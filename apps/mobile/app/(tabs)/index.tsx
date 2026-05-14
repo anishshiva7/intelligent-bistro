@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   FlatList,
   TextInput,
+  Pressable,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MENU_ITEMS, MENU_CATEGORIES } from '../../constants/menu';
@@ -26,58 +27,71 @@ export default function MenuScreen() {
     return matchesCategory && matchesSearch;
   });
 
-  const allSearchResults = searchQuery.length > 0
-    ? MENU_ITEMS.filter(
-        (item) =>
-          item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          item.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          item.tags.some((t) => t.toLowerCase().includes(searchQuery.toLowerCase()))
-      )
-    : [];
+  const searchResults =
+    searchQuery.length > 0
+      ? MENU_ITEMS.filter(
+          (item) =>
+            item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            item.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            item.tags.some((t) => t.toLowerCase().includes(searchQuery.toLowerCase()))
+        )
+      : [];
 
-  const displayItems = searchQuery.length > 0 ? allSearchResults : filteredItems;
+  const displayItems = searchQuery.length > 0 ? searchResults : filteredItems;
+  const isSearching = searchQuery.length > 0;
 
   return (
-    <SafeAreaView className="flex-1 bg-dark">
+    <SafeAreaView className="flex-1" style={{ backgroundColor: '#09090b' }}>
       {/* Header */}
-      <View className="px-4 pt-2 pb-3 bg-dark">
-        <View className="flex-row items-center mb-1">
-          <Text style={{ fontSize: 28 }}>🍽️</Text>
-          <View className="ml-2">
-            <Text className="text-white text-2xl font-bold tracking-tight">
+      <View
+        className="px-4 pt-2 pb-3"
+        style={{ borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.06)' }}
+      >
+        <View className="flex-row items-center mb-3" style={{ gap: 10 }}>
+          <Text style={{ fontSize: 26 }}>🍽️</Text>
+          <View>
+            <Text className="text-white font-bold tracking-tight" style={{ fontSize: 22, lineHeight: 26 }}>
               Intelligent Bistro
             </Text>
-            <Text className="text-bistro-400 text-xs">Order smart. Eat well.</Text>
+            <Text className="text-bistro-400" style={{ fontSize: 11 }}>Order smart. Eat well.</Text>
           </View>
         </View>
 
         {/* Search bar */}
-        <View className="mt-3 flex-row items-center bg-white/10 rounded-2xl px-3 py-2.5 border border-white/10">
-          <Text style={{ fontSize: 16 }}>🔍</Text>
+        <View
+          className="flex-row items-center rounded-2xl px-3 py-2.5"
+          style={{
+            backgroundColor: 'rgba(255,255,255,0.07)',
+            borderWidth: 1,
+            borderColor: 'rgba(255,255,255,0.1)',
+            gap: 8,
+          }}
+        >
+          <Text style={{ fontSize: 15 }}>🔍</Text>
           <TextInput
             value={searchQuery}
             onChangeText={setSearchQuery}
             placeholder="Search menu..."
-            placeholderTextColor="rgba(255,255,255,0.4)"
-            className="flex-1 ml-2 text-white text-sm"
+            placeholderTextColor="rgba(255,255,255,0.35)"
+            className="flex-1 text-white"
             style={{ fontSize: 14 }}
             returnKeyType="search"
           />
           {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => setSearchQuery('')}>
-              <Text className="text-white/60 text-lg">✕</Text>
-            </TouchableOpacity>
+            <Pressable onPress={() => setSearchQuery('')} hitSlop={8}>
+              <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 16 }}>✕</Text>
+            </Pressable>
           )}
         </View>
       </View>
 
-      {/* Category pills — hidden while searching */}
-      {searchQuery.length === 0 && (
-        <View className="bg-dark pb-2">
+      {/* Category pills */}
+      {!isSearching && (
+        <View style={{ borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)' }}>
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}
+            contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 10, gap: 8 }}
           >
             {MENU_CATEGORIES.map((cat) => {
               const active = cat.id === selectedCategory;
@@ -85,18 +99,22 @@ export default function MenuScreen() {
                 <TouchableOpacity
                   key={cat.id}
                   onPress={() => setSelectedCategory(cat.id)}
-                  className={`flex-row items-center rounded-full px-4 py-2 border ${
-                    active
-                      ? 'bg-bistro-500 border-bistro-500'
-                      : 'bg-white/5 border-white/10'
-                  }`}
+                  className="flex-row items-center rounded-full px-4 py-2"
+                  style={{
+                    backgroundColor: active ? '#06b6d4' : 'rgba(255,255,255,0.07)',
+                    borderWidth: 1,
+                    borderColor: active ? '#06b6d4' : 'rgba(255,255,255,0.1)',
+                    gap: 6,
+                  }}
                   activeOpacity={0.75}
                 >
-                  <Text style={{ fontSize: 16 }}>{cat.emoji}</Text>
+                  <Text style={{ fontSize: 15 }}>{cat.emoji}</Text>
                   <Text
-                    className={`ml-1.5 text-sm font-semibold ${
-                      active ? 'text-white' : 'text-gray-300'
-                    }`}
+                    style={{
+                      fontSize: 13,
+                      fontWeight: '600',
+                      color: active ? '#fff' : 'rgba(255,255,255,0.65)',
+                    }}
                   >
                     {cat.label}
                   </Text>
@@ -107,26 +125,40 @@ export default function MenuScreen() {
         </View>
       )}
 
-      {/* Section header */}
-      <View className="px-4 py-2 bg-dark">
-        <Text className="text-white/50 text-xs font-semibold uppercase tracking-wider">
-          {searchQuery.length > 0
-            ? `${displayItems.length} result${displayItems.length !== 1 ? 's' : ''}`
+      {/* Section label */}
+      <View className="px-4 py-2.5">
+        <Text
+          style={{
+            color: 'rgba(255,255,255,0.35)',
+            fontSize: 11,
+            fontWeight: '600',
+            textTransform: 'uppercase',
+            letterSpacing: 0.8,
+          }}
+        >
+          {isSearching
+            ? `${displayItems.length} result${displayItems.length !== 1 ? 's' : ''} for "${searchQuery}"`
             : `${MENU_CATEGORIES.find((c) => c.id === selectedCategory)?.label ?? ''} · ${filteredItems.length} items`}
         </Text>
       </View>
 
-      {/* Menu items */}
+      {/* Grid */}
       <FlatList
         data={displayItems}
         keyExtractor={(item) => item.id}
         renderItem={({ item }) => <MenuItemCard item={item} />}
-        contentContainerStyle={{ paddingVertical: 8, paddingBottom: 24 }}
+        contentContainerStyle={{ paddingTop: 4, paddingBottom: 28 }}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
         ListEmptyComponent={
           <View className="items-center justify-center py-20">
-            <Text style={{ fontSize: 48 }}>🤷</Text>
-            <Text className="text-white/60 text-base mt-3">No items found</Text>
+            <Text style={{ fontSize: 44 }}>🤷</Text>
+            <Text className="text-white/50 text-base mt-3">No items found</Text>
+            {isSearching && (
+              <TouchableOpacity onPress={() => setSearchQuery('')} className="mt-3">
+                <Text className="text-bistro-400 text-sm">Clear search</Text>
+              </TouchableOpacity>
+            )}
           </View>
         }
       />

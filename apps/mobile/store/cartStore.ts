@@ -8,6 +8,7 @@ interface CartStore {
   addItem: (menuItem: MenuItem, quantity?: number, modifiers?: string[]) => void;
   removeItem: (itemId: string) => void;
   updateQuantity: (itemId: string, quantity: number) => void;
+  decrementItem: (itemId: string, quantity: number) => void;
   clearCart: () => void;
   subtotal: () => number;
   tax: () => number;
@@ -38,6 +39,12 @@ export const useCartStore = create<CartStore>((set, get) => ({
     set((state) => ({
       items: state.items.filter((i) => i.menuItem.id !== itemId),
     }));
+  },
+
+  decrementItem: (itemId, quantity) => {
+    const current = get().items.find((i) => i.menuItem.id === itemId);
+    if (!current) return;
+    get().updateQuantity(itemId, current.quantity - quantity);
   },
 
   updateQuantity: (itemId, quantity) => {

@@ -46,6 +46,12 @@ export interface UpdateQuantityAction {
   quantity: number;
 }
 
+export interface DecrementItemAction {
+  type: 'DECREMENT_ITEM';
+  itemId: string;
+  quantity: number;
+}
+
 export interface ClearCartAction {
   type: 'CLEAR_CART';
 }
@@ -54,14 +60,29 @@ export type OrderAction =
   | AddItemAction
   | RemoveItemAction
   | UpdateQuantityAction
+  | DecrementItemAction
   | ClearCartAction;
 
+export type OrderIntent =
+  | 'MENU_QUESTION'
+  | 'ORDER_ACTION'
+  | 'CART_MODIFICATION'
+  | 'RECOMMENDATION'
+  | 'OTHER';
+
 export interface ParseOrderResponse {
+  intent?: OrderIntent;
   actions: OrderAction[];
   assistantMessage: string;
+}
+
+export interface ConversationTurn {
+  role: 'user' | 'assistant';
+  text: string;
 }
 
 export interface ParseOrderRequest {
   message: string;
   cartItems: CartItem[];
+  conversationHistory?: ConversationTurn[];
 }

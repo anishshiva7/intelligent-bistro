@@ -18,6 +18,12 @@ export const UpdateQuantityActionSchema = z.object({
   quantity: z.number().int().positive(),
 });
 
+export const DecrementItemActionSchema = z.object({
+  type: z.literal('DECREMENT_ITEM'),
+  itemId: z.string().min(1),
+  quantity: z.number().int().positive(),
+});
+
 export const ClearCartActionSchema = z.object({
   type: z.literal('CLEAR_CART'),
 });
@@ -26,10 +32,12 @@ export const OrderActionSchema = z.discriminatedUnion('type', [
   AddItemActionSchema,
   RemoveItemActionSchema,
   UpdateQuantityActionSchema,
+  DecrementItemActionSchema,
   ClearCartActionSchema,
 ]);
 
 export const ParseOrderResponseSchema = z.object({
+  intent: z.enum(['MENU_QUESTION', 'ORDER_ACTION', 'CART_MODIFICATION', 'RECOMMENDATION', 'OTHER']).optional(),
   actions: z.array(OrderActionSchema),
   assistantMessage: z.string().min(1),
 });
