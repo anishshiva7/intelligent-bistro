@@ -252,7 +252,10 @@ const cases: Case[] = [
     label: 'What\'s in my cart? → no actions, lists items',
     input: "What's in my cart?",
     cart: cartWith(['spicy_crispy_chicken', 2], ['bistro_fries', 1]),
-    check: (r) => r.actions.length === 0 && /spicy|chicken/i.test(r.assistantMessage),
+    check: (r) =>
+      r.actions.length === 0 &&
+      /spicy|chicken/i.test(r.assistantMessage) &&
+      /total/i.test(r.assistantMessage),
   },
   {
     label: 'What\'s my total? → no actions, mentions total',
@@ -320,6 +323,52 @@ const cases: Case[] = [
       r.actions.length === 1 &&
       r.actions[0].type === 'UPDATE_QUANTITY' &&
       (r.actions[0] as any).quantity === 2,
+  },
+  {
+    label: 'REGRESSION: "Add two waters" then "Add one spicy chickens" → spicy chicken, never water',
+    input: 'Add one spicy chickens',
+    cart: cartWith(['sparkling_water', 2]),
+    history: [
+      { role: 'user', text: 'Add two waters' },
+      { role: 'assistant', text: 'Added 2× Sparkling Water to your cart! 🛒' },
+    ],
+    check: (r) =>
+      r.actions.length === 1 &&
+      r.actions[0].type === 'ADD_ITEM' &&
+      (r.actions[0] as any).itemId === 'spicy_crispy_chicken' &&
+      !/(sparkling water)/i.test(JSON.stringify(r.actions)),
+  },
+  {
+    label: 'REGRESSION: "Add one instead" single-item cart → UPDATE_QUANTITY 1 with total prompt',
+    input: 'Add one instead',
+    cart: cartWith(['spicy_crispy_chicken', 3]),
+    history: [
+      { role: 'user', text: 'Add three spicy chickens' },
+      { role: 'assistant', text: 'Added 3× Spicy Crispy Chicken to your cart! 🛒' },
+    ],
+    check: (r) =>
+      r.actions.length === 1 &&
+      r.actions[0].type === 'UPDATE_QUANTITY' &&
+      (r.actions[0] as any).itemId === 'spicy_crispy_chicken' &&
+      (r.actions[0] as any).quantity === 1 &&
+      /total is now/i.test(r.assistantMessage),
+  },
+  {
+    label: 'REGRESSION: "Make it one instead" multi-item cart → clarification, not fallback',
+    input: 'Make it one instead',
+    cart: cartWith(['spicy_crispy_chicken', 2], ['bistro_fries', 1]),
+    check: (r) =>
+      r.actions.length === 0 &&
+      /which item/i.test(r.assistantMessage),
+  },
+  {
+    label: 'REGRESSION: "Make it one instead" single-item cart → UPDATE_QUANTITY 1',
+    input: 'Make it one instead',
+    cart: cartWith(['spicy_crispy_chicken', 4]),
+    check: (r) =>
+      r.actions.length === 1 &&
+      r.actions[0].type === 'UPDATE_QUANTITY' &&
+      (r.actions[0] as any).quantity === 1,
   },
 
   // ── Regression: remove item not in cart → no action, helpful message ─────────

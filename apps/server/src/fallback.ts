@@ -32,9 +32,9 @@ function hasExplicitQty(tokens: string[]): boolean {
 
 // Ordered alias table: first match wins. Specific patterns before generic.
 const ALIASES: [RegExp, string][] = [
-  [/spicy\s*(crispy\s*)?chicken/i,              'spicy_crispy_chicken'],
+  [/\bspicy\s*(?:crispy\s*)?chickens?\b/i,      'spicy_crispy_chicken'],
   [/buffalo\s*(chicken\s*)?(wrap)?/i,            'buffalo_chicken_wrap'],
-  [/sparkling\s*water|large\s*water|\bwater\b/i, 'sparkling_water'],
+  [/\bsparkling\s*water\b|\blarge\s*water\b|\bwaters?\b/i, 'sparkling_water'],
   [/bistro\s*fries|french\s*fries|\bfries\b/i,  'bistro_fries'],
   [/onion\s*rings?/i,                            'onion_rings'],
   [/truffle\s*mac|mac\s*(and\s*|&\s*|n\s*)?cheese|\bmac\b/i, 'mac_and_cheese'],
@@ -51,7 +51,7 @@ const ALIASES: [RegExp, string][] = [
   [/smash\s*burger|classic\s*(smash|burger)/i,   'classic_smash'],
   // Generic last-resort aliases
   [/\bburger\b/i,                                'classic_smash'],
-  [/\bchicken\b/i,                               'spicy_crispy_chicken'],
+  [/\bchickens?\b/i,                             'spicy_crispy_chicken'],
   [/\bwrap\b/i,                                  'buffalo_chicken_wrap'],
   [/\bring\b/i,                                  'onion_rings'],
 ];
@@ -135,6 +135,67 @@ function cartTotal(cartItems: CartItem[]) {
   return { subtotal, tax, total: subtotal + tax };
 }
 
+function applyActionsToCart(cartItems: CartItem[], actions: ParseOrderResponse['actions']): CartItem[] {
+  const next = cartItems.map((ci) => ({ ...ci, modifiers: [...ci.modifiers] }));
+
+  for (const action of actions) {
+    if (action.type === 'CLEAR_CART') return [];
+
+    if (action.type === 'ADD_ITEM') {
+      const menuItem = MENU_ITEMS.find((item) => item.id === action.itemId);
+      if (!menuItem) continue;
+      const existing = next.find((ci) => ci.menuItem.id === action.itemId);
+      if (existing) {
+        existing.quantity += action.quantity;
+      } else {
+        next.push({ menuItem, quantity: action.quantity, modifiers: action.modifiers ?? [] });
+      }
+      continue;
+    }
+
+    if (action.type === 'REMOVE_ITEM') {
+      const index = next.findIndex((ci) => ci.menuItem.id === action.itemId);
+      if (index >= 0) next.splice(index, 1);
+      continue;
+    }
+
+    if (action.type === 'DECREMENT_ITEM') {
+      const existing = next.find((ci) => ci.menuItem.id === action.itemId);
+      if (!existing) continue;
+      existing.quantity -= action.quantity;
+      if (existing.quantity <= 0) {
+        const index = next.findIndex((ci) => ci.menuItem.id === action.itemId);
+        if (index >= 0) next.splice(index, 1);
+      }
+      continue;
+    }
+
+    if (action.type === 'UPDATE_QUANTITY') {
+      const existing = next.find((ci) => ci.menuItem.id === action.itemId);
+      if (!existing) continue;
+      existing.quantity = action.quantity;
+    }
+  }
+
+  return next;
+}
+
+function withCartChangeSummary(
+  assistantMessage: string,
+  cartItems: CartItem[],
+  actions: ParseOrderResponse['actions']
+): string {
+  if (actions.length === 0) return assistantMessage;
+
+  const nextCart = applyActionsToCart(cartItems, actions);
+  if (nextCart.length === 0) {
+    return `${assistantMessage} Your cart is now empty.`;
+  }
+
+  const { total } = cartTotal(nextCart);
+  return `${assistantMessage} Your cart total is now ${fmt(total)}. Ready to checkout, or would you like to add anything else?`;
+}
+
 function isSpicy(item: MenuItem): boolean {
   return (
     item.tags.includes('spicy') ||
@@ -144,6 +205,58 @@ function isSpicy(item: MenuItem): boolean {
 
 function isVegetarian(item: MenuItem): boolean {
   return item.tags.includes('vegetarian') || item.tags.includes('vegan-option');
+}
+
+function extractLastReferencedItem(history: ConversationTurn[]): MenuItem | null {
+  for (const turn of [...history].reverse()) {
+    const item = findItem(turn.text);
+    if (item) return item;
+  }
+  return null;
+}
+
+function resolveContextTarget(cartItems: CartItem[], history: ConversationTurn[]): MenuItem | null | 'ambiguous' {
+  if (cartItems.length === 1) return cartItems[0].menuItem;
+  if (cartItems.length === 0) return null;
+
+  const historyItem = extractLastReferencedItem(history) ?? extractLastSuggestedItem(history);
+  if (!historyItem) return 'ambiguous';
+
+  const inCart = cartItems.find((ci) => ci.menuItem.id === historyItem.id);
+  return inCart ? inCart.menuItem : 'ambiguous';
+}
+
+function buildQuantityClarification(quantity: number, cartItems: CartItem[]): ParseOrderResponse {
+  const names = cartItems.map((ci) => ci.menuItem.name).join(', ');
+  return {
+    actions: [],
+    assistantMessage: `Which item should I update to ${quantity}? You have: ${names}.`,
+  };
+}
+
+function buildContextQuantityUpdate(
+  quantity: number,
+  cartItems: CartItem[],
+  history: ConversationTurn[]
+): ParseOrderResponse {
+  const target = resolveContextTarget(cartItems, history);
+  if (target === 'ambiguous') {
+    return buildQuantityClarification(quantity, cartItems);
+  }
+  if (!target) {
+    return {
+      actions: [],
+      assistantMessage: 'Your cart is empty — nothing to update. What would you like to order?',
+    };
+  }
+
+  const actions: ParseOrderResponse['actions'] = [
+    { type: 'UPDATE_QUANTITY', itemId: target.id, quantity },
+  ];
+  return {
+    actions,
+    assistantMessage: withCartChangeSummary(`Updated ${target.name} to ${quantity}.`, cartItems, actions),
+  };
 }
 
 // ─── Cart inspection ──────────────────────────────────────────────────────────
@@ -176,7 +289,7 @@ function handleCartQuery(lower: string, cartItems: CartItem[]): ParseOrderRespon
     .join(', ');
   return {
     actions: [],
-    assistantMessage: `You have: ${list}. Total: ${fmt(total)} with tax.`,
+    assistantMessage: `You have: ${list}. Total: ${fmt(total)} with tax. Ready to place the order, or would you like to add anything else?`,
   };
 }
 
@@ -249,7 +362,10 @@ function parseRemove(lower: string, cartItems: CartItem[], history: Conversation
         removedLabels.length === 1
           ? removedLabels[0]
           : `${removedLabels.slice(0, -1).join(', ')} and ${removedLabels[removedLabels.length - 1]}`;
-      return { actions, assistantMessage: `Removed ${summary} from your cart.` };
+      return {
+        actions,
+        assistantMessage: withCartChangeSummary(`Removed ${summary} from your cart.`, cartItems, actions),
+      };
     }
     return null;
   }
@@ -273,9 +389,10 @@ function parseRemove(lower: string, cartItems: CartItem[], history: Conversation
   if (!cartMatch) return null;
 
   if (removeAll) {
+    const actions: ParseOrderResponse['actions'] = [{ type: 'REMOVE_ITEM', itemId: item.id }];
     return {
-      actions: [{ type: 'REMOVE_ITEM', itemId: item.id }],
-      assistantMessage: `Done — removed all ${item.name} from your cart.`,
+      actions,
+      assistantMessage: withCartChangeSummary(`Done — removed all ${item.name} from your cart.`, cartItems, actions),
     };
   }
 
@@ -287,25 +404,31 @@ function parseRemove(lower: string, cartItems: CartItem[], history: Conversation
     const currentQty = cartMatch?.quantity ?? 0;
 
     if (currentQty > 0 && qty >= currentQty) {
+      const actions: ParseOrderResponse['actions'] = [{ type: 'REMOVE_ITEM', itemId: item.id }];
       return {
-        actions: [{ type: 'REMOVE_ITEM', itemId: item.id }],
-        assistantMessage: `Done — removed all ${item.name} from your cart.`,
+        actions,
+        assistantMessage: withCartChangeSummary(`Done — removed all ${item.name} from your cart.`, cartItems, actions),
       };
     }
 
     const remaining = currentQty > 0 ? currentQty - qty : 0;
+    const actions: ParseOrderResponse['actions'] = [{ type: 'DECREMENT_ITEM', itemId: item.id, quantity: qty }];
     return {
-      actions: [{ type: 'DECREMENT_ITEM', itemId: item.id, quantity: qty }],
-      assistantMessage:
+      actions,
+      assistantMessage: withCartChangeSummary(
         remaining > 0
           ? `Removed ${qty}× ${item.name} — you now have ${remaining} left in your cart.`
           : `Removed ${item.name} from your cart.`,
+        cartItems,
+        actions
+      ),
     };
   }
 
+  const actions: ParseOrderResponse['actions'] = [{ type: 'REMOVE_ITEM', itemId: item.id }];
   return {
-    actions: [{ type: 'REMOVE_ITEM', itemId: item.id }],
-    assistantMessage: `Done — removed ${item.name} from your cart.`,
+    actions,
+    assistantMessage: withCartChangeSummary(`Done — removed ${item.name} from your cart.`, cartItems, actions),
   };
 }
 
@@ -329,12 +452,16 @@ function handleContextCommand(lower: string, cartItems: CartItem[], history: Con
       if (!target) {
         return { actions: [], assistantMessage: "Your cart is empty — what would you like to add first?" };
       }
+      const actions: ParseOrderResponse['actions'] = [{ type: 'ADD_ITEM', itemId: target.id, quantity: qty, modifiers: [] }];
       return {
-        actions: [{ type: 'ADD_ITEM', itemId: target.id, quantity: qty, modifiers: [] }],
-        assistantMessage:
+        actions,
+        assistantMessage: withCartChangeSummary(
           qty === 1
             ? `Added another ${target.name} to your cart! 🛒`
             : `Added ${qty}× more ${target.name} to your cart! 🛒`,
+          cartItems,
+          actions
+        ),
       };
     }
   }
@@ -345,11 +472,17 @@ function handleContextCommand(lower: string, cartItems: CartItem[], history: Con
     const itemText = onlyMatch[3];
     const item = findItem(itemText);
     if (item) {
+      const actions: ParseOrderResponse['actions'] = [{ type: 'UPDATE_QUANTITY', itemId: item.id, quantity: 1 }];
       return {
-        actions: [{ type: 'UPDATE_QUANTITY', itemId: item.id, quantity: 1 }],
-        assistantMessage: `Updated ${item.name} to 1.`,
+        actions,
+        assistantMessage: withCartChangeSummary(`Updated ${item.name} to 1.`, cartItems, actions),
       };
     }
+  }
+
+  const contextualOneMatch = lower.match(/^(?:add\s+)?(?:make\s+(?:it|that)\s+)?(?:just|only\s+)?(one|1|a)(?:\s+instead)?$/i);
+  if (contextualOneMatch || /^(?:just|only)\s+one$/i.test(lower)) {
+    return buildContextQuantityUpdate(1, cartItems, history);
   }
 
   // "make it/that X", "change it to X", "make that three instead", "actually make it 2"
@@ -371,32 +504,15 @@ function handleContextCommand(lower: string, cartItems: CartItem[], history: Con
     const mentionedItem = stripped.length > 1 ? findItem(stripped) : null;
 
     if (mentionedItem) {
+      const actions: ParseOrderResponse['actions'] = [{ type: 'UPDATE_QUANTITY', itemId: mentionedItem.id, quantity: qty }];
       return {
-        actions: [{ type: 'UPDATE_QUANTITY', itemId: mentionedItem.id, quantity: qty }],
-        assistantMessage: `Updated ${mentionedItem.name} to ${qty}.`,
+        actions,
+        assistantMessage: withCartChangeSummary(`Updated ${mentionedItem.name} to ${qty}.`, cartItems, actions),
       };
     }
 
     // No item named → use cart context
-    if (cartItems.length === 1) {
-      const ci = cartItems[0];
-      return {
-        actions: [{ type: 'UPDATE_QUANTITY', itemId: ci.menuItem.id, quantity: qty }],
-        assistantMessage: `Updated ${ci.menuItem.name} to ${qty}.`,
-      };
-    }
-    if (cartItems.length > 1) {
-      const names = cartItems.map((ci) => ci.menuItem.name).join(', ');
-      return {
-        actions: [],
-        assistantMessage: `Which item would you like to set to ${qty}? You have: ${names}.`,
-      };
-    }
-    // Empty cart
-    return {
-      actions: [],
-      assistantMessage: `Your cart is empty — nothing to update. What would you like to order?`,
-    };
+    return buildContextQuantityUpdate(qty, cartItems, history);
   }
 
   return null;
@@ -792,12 +908,16 @@ function handleAffirmativeFollowUp(lower: string, history: ConversationTurn[]): 
   const qtyMatch = lower.match(/\b(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\b/i);
   const qty = qtyMatch ? parseQuantityFromTokens([qtyMatch[1]]) : 1;
 
+  const actions: ParseOrderResponse['actions'] = [{ type: 'ADD_ITEM', itemId: item.id, quantity: qty, modifiers: [] }];
   return {
-    actions: [{ type: 'ADD_ITEM', itemId: item.id, quantity: qty, modifiers: [] }],
-    assistantMessage:
+    actions,
+    assistantMessage: withCartChangeSummary(
       qty === 1
         ? `Added ${item.name} to your cart! 🛒`
         : `Added ${qty}× ${item.name} to your cart! 🛒`,
+      [],
+      actions
+    ),
   };
 }
 
@@ -867,9 +987,10 @@ export function fallbackParse(
     const qty = parseQuantityFromTokens([updateMatch[2]]);
     const item = findItem(itemText);
     if (item) {
+      const actions: ParseOrderResponse['actions'] = [{ type: 'UPDATE_QUANTITY', itemId: item.id, quantity: qty }];
       return {
-        actions: [{ type: 'UPDATE_QUANTITY', itemId: item.id, quantity: qty }],
-        assistantMessage: `Updated ${item.name} to ${qty}.`,
+        actions,
+        assistantMessage: withCartChangeSummary(`Updated ${item.name} to ${qty}.`, cartItems, actions),
       };
     }
   }
@@ -946,7 +1067,7 @@ export function fallbackParse(
         : `${addedNames.slice(0, -1).join(', ')} and ${addedNames[addedNames.length - 1]}`;
     return {
       actions: addActions,
-      assistantMessage: `Added ${summary} to your cart! 🛒`,
+      assistantMessage: withCartChangeSummary(`Added ${summary} to your cart! 🛒`, cartItems, addActions),
     };
   }
 

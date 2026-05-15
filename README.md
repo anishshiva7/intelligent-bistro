@@ -11,7 +11,7 @@ A full-stack AI-powered restaurant ordering app built with React Native, Expo, a
 <!-- Screenshots: drop images here -->
 | Menu | Cart | AI Ordering |
 |------|------|-------------|
-| ![menu]() | ![cart]() | ![chat]() |
+| ![Menu screen](docs/images/menu.png) | ![Cart screen](docs/images/cart.png) | ![AI ordering screen](docs/images/chat.png) |
 
 ---
 

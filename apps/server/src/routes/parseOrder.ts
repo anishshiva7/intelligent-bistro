@@ -8,6 +8,36 @@ import { fallbackParse } from '../fallback';
 const router = Router();
 const client = new Anthropic();
 
+export function shouldUseDeterministicParser(message: string): boolean {
+  const lower = message.toLowerCase().trim();
+
+  if (
+    /^(add|get|order|give me|let me get|i want|i'd like|i would like|throw in|can you add|can i (get|have))\b/.test(lower)
+  ) {
+    return true;
+  }
+
+  if (
+    /^(remove|delete|take off|take away|cancel|drop|clear|empty|start over|change|set|update)\b/.test(lower)
+  ) {
+    return true;
+  }
+
+  if (
+    /^(make it|make that|add one instead|make it one instead|just one|only one|add one more|add \d+ more|add (one|two|three|four|five|six|seven|eight|nine|ten) more|same thing again|another one|remove \d+ more|take off \d+ more)\b/.test(lower)
+  ) {
+    return true;
+  }
+
+  if (
+    /what('s| is) in (my |the )?cart|show.*cart|my (current )?cart|what('s| is) (my )?total|how much (is|does|will|do i)|order (cost|total|price)|current (total|cost)/.test(lower)
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 router.post('/', async (req: Request, res: Response) => {
   const parsed = ParseOrderRequestSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -16,9 +46,10 @@ router.post('/', async (req: Request, res: Response) => {
   }
 
   const { message, cartItems, conversationHistory } = parsed.data;
+  const deterministicResult = fallbackParse(message, cartItems, conversationHistory);
 
-  if (!process.env.ANTHROPIC_API_KEY) {
-    res.json(fallbackParse(message, cartItems, conversationHistory));
+  if (!process.env.ANTHROPIC_API_KEY || shouldUseDeterministicParser(message)) {
+    res.json(deterministicResult);
     return;
   }
 
@@ -55,11 +86,11 @@ router.post('/', async (req: Request, res: Response) => {
       res.json(validated.data);
     } else {
       console.warn('[parse-order] Zod validation failed, using fallback:', validated.error.flatten());
-      res.json(fallbackParse(message, cartItems, conversationHistory));
+      res.json(deterministicResult);
     }
   } catch (err) {
     console.error('[parse-order] AI error, using fallback:', err);
-    res.json(fallbackParse(message, cartItems, conversationHistory));
+    res.json(deterministicResult);
   }
 });
 
