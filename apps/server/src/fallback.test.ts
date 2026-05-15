@@ -157,6 +157,16 @@ const cases: Case[] = [
       (r.actions[0] as any).itemId === 'bistro_fries',
   },
   {
+    label: 'Let me get 3 truffle Mac and cheeses → single ADD_ITEM qty 3',
+    input: 'Let me get 3 truffle Mac and cheeses',
+    check: (r) =>
+      r.actions.length === 1 &&
+      r.actions[0].type === 'ADD_ITEM' &&
+      (r.actions[0] as any).itemId === 'mac_and_cheese' &&
+      (r.actions[0] as any).quantity === 3 &&
+      !/and Truffle Mac & Cheese/i.test(r.assistantMessage),
+  },
+  {
     label: 'I want one spicy chicken and two waters → 2 ADD_ITEMs',
     input: 'I want one spicy chicken and two waters',
     check: (r) =>

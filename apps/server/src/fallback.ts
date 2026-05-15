@@ -106,10 +106,24 @@ function findCartItem(text: string, cartItems: CartItem[]): CartItem | null {
 
 // ─── Multi-item segment splitting ─────────────────────────────────────────────
 
+const PROTECTED_SPLIT_PHRASES: Array<{ pattern: RegExp; token: string }> = [
+  { pattern: /\bmac\s+and\s+cheeses?\b/gi, token: 'mac___and___cheese' },
+];
+
 function splitSegments(text: string): string[] {
-  return text
+  const protectedText = PROTECTED_SPLIT_PHRASES.reduce(
+    (acc, { pattern, token }) => acc.replace(pattern, token),
+    text
+  );
+
+  return protectedText
     .split(/\s*(?:\band\b|,|&|\bplus\b)\s*/i)
-    .map((s) => s.trim())
+    .map((s) =>
+      PROTECTED_SPLIT_PHRASES.reduce(
+        (acc, { token }) => acc.replace(new RegExp(token, 'gi'), 'mac and cheese'),
+        s
+      ).trim()
+    )
     .filter(Boolean);
 }
 
