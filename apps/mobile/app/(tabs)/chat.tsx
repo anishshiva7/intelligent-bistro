@@ -17,7 +17,7 @@ import { useRouter } from 'expo-router';
 import { useCartStore } from '../../store/cartStore';
 import { parseOrder } from '../../lib/api';
 import { OrderAction, MenuItem, ConversationTurn } from '@bistro/shared';
-import { MENU_ITEMS } from '../../constants/menu';
+import { MENU_ITEMS } from '@bistro/shared';
 
 interface Message {
   id: string;

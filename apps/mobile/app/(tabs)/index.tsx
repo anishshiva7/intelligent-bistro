@@ -9,7 +9,7 @@ import {
   Pressable,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { MENU_ITEMS, MENU_CATEGORIES } from '../../constants/menu';
+import { MENU_ITEMS, MENU_CATEGORIES } from '@bistro/shared';
 import { MenuItemCard } from '../../components/MenuItemCard';
 import { MenuCategory } from '@bistro/shared';
 

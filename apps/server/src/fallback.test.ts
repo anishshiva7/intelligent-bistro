@@ -451,6 +451,532 @@ const cases: Case[] = [
     input: 'Add those',
     check: (_r) => true, // Should not throw; actions can be 0 or 1 depending on context
   },
+
+  // ── ISSUE 1 (QA set): Superlative menu questions ────────────────────────────
+  {
+    label: 'QA1: "What is the cheapest spicy item?" → cheapest spicy, no ADD_ITEM',
+    input: 'What is the cheapest spicy item?',
+    check: (r) =>
+      r.actions.length === 0 &&
+      /buffalo chicken wrap|\$12\.49/i.test(r.assistantMessage),
+  },
+  {
+    label: 'QA1b: "cheapest vegetarian item" → cheapest veg item',
+    input: 'What is the cheapest vegetarian item?',
+    check: (r) =>
+      r.actions.length === 0 &&
+      /\$4\.49|garden side salad|salad/i.test(r.assistantMessage),
+  },
+  {
+    label: 'QA1c: "most expensive item" → most expensive overall',
+    input: 'What is the most expensive item?',
+    check: (r) =>
+      r.actions.length === 0 &&
+      /\$14\.99|spicy crispy chicken/i.test(r.assistantMessage),
+  },
+  {
+    label: 'QA1d: "cheapest drink" → cheapest drink',
+    input: 'What is the cheapest drink?',
+    check: (r) =>
+      r.actions.length === 0 &&
+      /\$2\.49|sparkling water/i.test(r.assistantMessage),
+  },
+
+  // ── ISSUE 2 (QA set): Multi-item removal ─────────────────────────────────────
+  {
+    label: 'QA2: "Remove 2 waters and 2 fries" (cart: water x3, fries x1) → 2 actions',
+    input: 'Remove 2 waters and 2 fries',
+    cart: cartWith(['sparkling_water', 3], ['bistro_fries', 1]),
+    check: (r) => {
+      if (r.actions.length !== 2) return false;
+      const hasDecrement = r.actions.some(
+        (a) => a.type === 'DECREMENT_ITEM' && (a as any).itemId === 'sparkling_water' && (a as any).quantity === 2
+      );
+      const hasRemove = r.actions.some(
+        (a) => a.type === 'REMOVE_ITEM' && (a as any).itemId === 'bistro_fries'
+      );
+      return hasDecrement && hasRemove;
+    },
+  },
+  {
+    label: 'QA2b: "Remove the fries and the water" (full removes) → 2 REMOVE_ITEMs',
+    input: 'Remove the fries and the water',
+    cart: cartWith(['bistro_fries', 2], ['sparkling_water', 1]),
+    check: (r) =>
+      r.actions.length === 2 &&
+      r.actions.every((a) => a.type === 'REMOVE_ITEM') &&
+      r.actions.some((a) => (a as any).itemId === 'bistro_fries') &&
+      r.actions.some((a) => (a as any).itemId === 'sparkling_water'),
+  },
+  {
+    label: 'QA2c: multi-remove, one item not in cart → only removes cart items',
+    input: 'Remove the fries and the milkshake',
+    cart: cartWith(['bistro_fries', 1]),
+    check: (r) =>
+      r.actions.length === 1 &&
+      r.actions[0].type === 'REMOVE_ITEM' &&
+      (r.actions[0] as any).itemId === 'bistro_fries',
+  },
+
+  // ── ISSUE 3 (QA set): Singular popular returns ONE item ──────────────────────
+  {
+    label: 'QA3: "What is your most popular item?" → exactly ONE item, no actions',
+    input: 'What is your most popular item?',
+    check: (r) => {
+      if (r.actions.length > 0) return false;
+      // Must mention exactly one item (the first popular item — Classic Smash Burger)
+      const popularNames = ['classic smash', 'spicy crispy', 'cuban', 'bistro fries', 'craft lemonade', 'milkshake', 'brownie'];
+      const mentions = popularNames.filter((n) => r.assistantMessage.toLowerCase().includes(n));
+      return mentions.length === 1;
+    },
+  },
+  {
+    label: 'QA3b: "best item?" → singular → one item',
+    input: 'What is the best item?',
+    check: (r) => {
+      if (r.actions.length > 0) return false;
+      const popularNames = ['classic smash', 'spicy crispy', 'cuban', 'bistro fries', 'craft lemonade', 'milkshake', 'brownie'];
+      const mentions = popularNames.filter((n) => r.assistantMessage.toLowerCase().includes(n));
+      return mentions.length === 1;
+    },
+  },
+  {
+    label: "QA3c: \"What's popular?\" (plural) → lists multiple items",
+    input: "What's popular?",
+    check: (r) => {
+      if (r.actions.length > 0) return false;
+      const popularNames = ['classic smash', 'spicy crispy', 'cuban', 'bistro fries', 'craft lemonade', 'milkshake', 'brownie'];
+      const mentions = popularNames.filter((n) => r.assistantMessage.toLowerCase().includes(n));
+      return mentions.length > 1;
+    },
+  },
+
+  // ── ISSUE 4 (QA set): Follow-up references after singular recommendation ─────
+  {
+    label: 'QA4: "Add 2 of those" after singular popular → ADD_ITEM qty 2',
+    input: 'Add 2 of those',
+    history: [
+      { role: 'user', text: 'What is your most popular item?' },
+      { role: 'assistant', text: 'Our most popular item is the 🍔 Classic Smash Burger ($13.99) — double smashed beef patty. Want me to add it?' },
+    ],
+    check: (r) =>
+      r.actions.length === 1 &&
+      r.actions[0].type === 'ADD_ITEM' &&
+      (r.actions[0] as any).itemId === 'classic_smash' &&
+      (r.actions[0] as any).quantity === 2,
+  },
+  {
+    label: 'QA4b: "add one" after recommendation → ADD_ITEM qty 1 from history',
+    input: 'add one',
+    history: [
+      { role: 'user', text: 'Recommend something spicy' },
+      { role: 'assistant', text: 'Our top spicy pick is the 🌶️ Spicy Crispy Chicken ($14.99) — Want me to add it?' },
+    ],
+    check: (r) =>
+      r.actions.length === 1 &&
+      r.actions[0].type === 'ADD_ITEM' &&
+      (r.actions[0] as any).itemId === 'spicy_crispy_chicken',
+  },
+  {
+    label: 'QA4c: "add another one" after recommendation → ADD_ITEM qty 1',
+    input: 'add another one',
+    history: [
+      { role: 'user', text: 'Recommend something' },
+      { role: 'assistant', text: 'Our top pick is the 🍔 Classic Smash Burger ($13.99) — Want me to add it?' },
+    ],
+    check: (r) =>
+      r.actions.length === 1 &&
+      r.actions[0].type === 'ADD_ITEM' &&
+      (r.actions[0] as any).itemId === 'classic_smash',
+  },
+
+  // ── ISSUE 1a: Recommendation must respect spicy constraint ──────────────────
+  {
+    label: 'ISSUE1a: "Recommend something spicy" → spicy item only (never lemonade/soda)',
+    input: 'Recommend something spicy',
+    check: (r) => {
+      if (r.actions.length > 0) return false;
+      // Any of the 3 spicy items is a valid recommendation
+      return /spicy crispy chicken|buffalo chicken wrap|veggie smash/i.test(r.assistantMessage) &&
+        // Must NOT recommend non-spicy items
+        !/craft lemonade|fountain soda|sparkling water|milkshake|brownie|churro|salad|mac|onion rings|classic smash|mushroom swiss|cuban|blt/i.test(r.assistantMessage);
+    },
+  },
+  {
+    label: 'ISSUE1a: "What should I order that\'s spicy?" → spicy item only',
+    input: "What should I order that's spicy?",
+    check: (r) =>
+      r.actions.length === 0 &&
+      /spicy crispy chicken|buffalo|veggie smash/i.test(r.assistantMessage),
+  },
+
+  // ── ISSUE 1b: Affirmative follow-up resolves to last recommended item ────────
+  {
+    label: 'ISSUE1b: "Sure" after single-item recommendation → ADD_ITEM qty 1',
+    input: 'Sure',
+    history: [
+      { role: 'user', text: 'Recommend something spicy' },
+      { role: 'assistant', text: 'Our top spicy pick is the 🌶️ Spicy Crispy Chicken ($14.99) — buttermilk fried chicken. Want me to add it?' },
+    ],
+    check: (r) =>
+      r.actions.length === 1 &&
+      r.actions[0].type === 'ADD_ITEM' &&
+      (r.actions[0] as any).itemId === 'spicy_crispy_chicken' &&
+      (r.actions[0] as any).quantity === 1,
+  },
+  {
+    label: 'ISSUE1b: "I\'ll take 2" after recommendation → ADD_ITEM qty 2',
+    input: "I'll take 2",
+    history: [
+      { role: 'user', text: 'Recommend something spicy' },
+      { role: 'assistant', text: 'Our top spicy pick is the 🌶️ Spicy Crispy Chicken ($14.99) — Want me to add it?' },
+    ],
+    check: (r) =>
+      r.actions.length === 1 &&
+      r.actions[0].type === 'ADD_ITEM' &&
+      (r.actions[0] as any).itemId === 'spicy_crispy_chicken' &&
+      (r.actions[0] as any).quantity === 2,
+  },
+  {
+    label: 'ISSUE1b: "Yes please" after recommendation → ADD_ITEM qty 1',
+    input: 'Yes please',
+    history: [
+      { role: 'user', text: 'Recommend something' },
+      { role: 'assistant', text: 'Our top pick is the 🍔 Classic Smash Burger ($13.99) — Want me to add it?' },
+    ],
+    check: (r) =>
+      r.actions.length === 1 &&
+      r.actions[0].type === 'ADD_ITEM' &&
+      (r.actions[0] as any).itemId === 'classic_smash',
+  },
+  {
+    label: 'ISSUE1b: "That sounds good" after recommendation → ADD_ITEM',
+    input: 'That sounds good',
+    history: [
+      { role: 'user', text: 'Recommend something' },
+      { role: 'assistant', text: 'Our top pick is the 🥖 Cuban Pressed ($13.49) — Want me to add it?' },
+    ],
+    check: (r) =>
+      r.actions.length === 1 &&
+      r.actions[0].type === 'ADD_ITEM' &&
+      (r.actions[0] as any).itemId === 'cuban_pressed',
+  },
+  {
+    label: 'ISSUE1b: "I\'ll take one" after recommendation → ADD_ITEM qty 1',
+    input: "I'll take one",
+    history: [
+      { role: 'user', text: 'Recommend a drink' },
+      { role: 'assistant', text: 'Our top pick is the 🍋 Craft Lemonade ($3.99) — Want me to add it?' },
+    ],
+    check: (r) =>
+      r.actions.length === 1 &&
+      r.actions[0].type === 'ADD_ITEM' &&
+      (r.actions[0] as any).itemId === 'craft_lemonade',
+  },
+  {
+    label: 'ISSUE1b: "Sure" with NO history → no action (cannot resolve item)',
+    input: 'Sure',
+    check: (r) => r.actions.length === 0,
+  },
+  {
+    label: 'ISSUE1b: affirmative after multi-item message → null (ambiguous)',
+    input: 'Sure',
+    history: [
+      { role: 'user', text: "What's spicy?" },
+      { role: 'assistant', text: 'Our spicy options are 🌶️ Spicy Crispy Chicken and 🌯 Buffalo Chicken Wrap.' },
+    ],
+    check: (r) => r.actions.length === 0, // cannot resolve — two items in history
+  },
+
+  // ── ISSUE 2: Negative quantities must never mutate cart ──────────────────────
+  {
+    label: 'ISSUE2: "Add negative 10 burgers" → actions: [], error message',
+    input: 'Add negative 10 burgers',
+    check: (r) => r.actions.length === 0 && r.actions.every((a) => a.type !== 'ADD_ITEM'),
+  },
+  {
+    label: 'ISSUE2: "Add -10 burgers" → actions: [], error message',
+    input: 'Add -10 burgers',
+    check: (r) => r.actions.length === 0,
+  },
+  {
+    label: 'ISSUE2: "Add -5 fries" → actions: []',
+    input: 'Add -5 fries',
+    check: (r) => r.actions.length === 0,
+  },
+  {
+    label: 'ISSUE2: "Remove negative 2 fries" → actions: []',
+    input: 'Remove negative 2 fries',
+    cart: cartWith(['bistro_fries', 5]),
+    check: (r) => r.actions.length === 0,
+  },
+
+  // ── ISSUE 3: UPDATE_QUANTITY message must say "Updated", not "Added" ─────────
+  {
+    label: 'ISSUE3: "Make it 2 instead" single-item cart → UPDATE_QUANTITY, message says Updated',
+    input: 'Make it 2 instead',
+    cart: cartWith(['classic_smash', 3]),
+    check: (r) =>
+      r.actions.length === 1 &&
+      r.actions[0].type === 'UPDATE_QUANTITY' &&
+      (r.actions[0] as any).quantity === 2 &&
+      /updated/i.test(r.assistantMessage) &&
+      !/added/i.test(r.assistantMessage),
+  },
+  {
+    label: 'ISSUE3: "Change the burger to 2" → UPDATE_QUANTITY, message says Updated',
+    input: 'Change the burger to 2',
+    check: (r) =>
+      r.actions.length === 1 &&
+      r.actions[0].type === 'UPDATE_QUANTITY' &&
+      /updated/i.test(r.assistantMessage) &&
+      !/added/i.test(r.assistantMessage),
+  },
+  {
+    label: 'ISSUE3: "Set fries to 3" → UPDATE_QUANTITY, message says Updated',
+    input: 'Set fries to 3',
+    check: (r) =>
+      r.actions.length === 1 &&
+      r.actions[0].type === 'UPDATE_QUANTITY' &&
+      (r.actions[0] as any).quantity === 3 &&
+      /updated/i.test(r.assistantMessage),
+  },
+
+  // ── BUG FIX: "Remove 2 more" with conversational context ────────────────────
+  {
+    label: 'BUG1: "Remove 2 more" (history=spicy chicken) → DECREMENT_ITEM qty 2',
+    input: 'Remove 2 more',
+    cart: cartWith(['spicy_crispy_chicken', 10]),
+    history: [
+      { role: 'user', text: 'Add 10 spicy chickens' },
+      { role: 'assistant', text: 'Added 10× Spicy Crispy Chicken to your cart! 🛒' },
+    ],
+    check: (r) =>
+      r.actions.length === 1 &&
+      r.actions[0].type === 'DECREMENT_ITEM' &&
+      (r.actions[0] as any).itemId === 'spicy_crispy_chicken' &&
+      (r.actions[0] as any).quantity === 2,
+  },
+  {
+    label: 'BUG1b: "Take off 3 more" (history=fries) → DECREMENT_ITEM qty 3',
+    input: 'Take off 3 more',
+    cart: cartWith(['bistro_fries', 8]),
+    history: [
+      { role: 'user', text: 'Add 8 fries' },
+      { role: 'assistant', text: 'Added 8× Bistro Fries to your cart! 🛒' },
+    ],
+    check: (r) =>
+      r.actions.length === 1 &&
+      r.actions[0].type === 'DECREMENT_ITEM' &&
+      (r.actions[0] as any).itemId === 'bistro_fries' &&
+      (r.actions[0] as any).quantity === 3,
+  },
+
+  // ── BUG FIX: "Make it 2 instead" → UPDATE_QUANTITY, never ADD_ITEM ──────────
+  {
+    label: 'BUG2: "Make it 2 instead" single-item cart → UPDATE_QUANTITY not ADD_ITEM',
+    input: 'Make it 2 instead',
+    cart: cartWith(['spicy_crispy_chicken', 5]),
+    check: (r) =>
+      r.actions.length === 1 &&
+      r.actions[0].type === 'UPDATE_QUANTITY' &&
+      (r.actions[0] as any).quantity === 2,
+  },
+  {
+    label: 'BUG2b: "Make it 3 instead" single-item cart → UPDATE_QUANTITY 3',
+    input: 'Make it 3 instead',
+    cart: cartWith(['bistro_fries', 1]),
+    check: (r) =>
+      r.actions.length === 1 &&
+      r.actions[0].type === 'UPDATE_QUANTITY' &&
+      (r.actions[0] as any).quantity === 3,
+  },
+  {
+    label: 'BUG2c: "Make it 2 instead" multi-item cart → clarification, no ADD_ITEM',
+    input: 'Make it 2 instead',
+    cart: cartWith(['spicy_crispy_chicken', 1], ['bistro_fries', 1]),
+    check: (r) => r.actions.length === 0 && r.actions.every((a) => a.type !== 'ADD_ITEM'),
+  },
+
+  // ── BUG FIX: "Add 1 more" with digit ────────────────────────────────────────
+  {
+    label: 'BUG3: "Add 1 more" (cart has chicken) → ADD_ITEM qty 1',
+    input: 'Add 1 more',
+    cart: cartWith(['spicy_crispy_chicken', 2]),
+    check: (r) =>
+      r.actions.length === 1 &&
+      r.actions[0].type === 'ADD_ITEM' &&
+      (r.actions[0] as any).itemId === 'spicy_crispy_chicken' &&
+      (r.actions[0] as any).quantity === 1,
+  },
+  {
+    label: 'BUG3b: "Add 5 more" (cart has fries) → ADD_ITEM qty 5',
+    input: 'Add 5 more',
+    cart: cartWith(['bistro_fries', 2]),
+    check: (r) =>
+      r.actions.length === 1 &&
+      r.actions[0].type === 'ADD_ITEM' &&
+      (r.actions[0] as any).itemId === 'bistro_fries' &&
+      (r.actions[0] as any).quantity === 5,
+  },
+
+  // ── BUG FIX: Negative quantities → reject with error message ────────────────
+  {
+    label: 'BUG4: "Make water negative 3" → actions: [], error message',
+    input: 'Make water negative 3',
+    cart: cartWith(['sparkling_water', 5]),
+    check: (r) => r.actions.length === 0 && /negative|must be|positive|can't process/i.test(r.assistantMessage),
+  },
+  {
+    label: 'BUG4b: "Set fries to negative" → actions: [], error message',
+    input: 'Set fries to negative',
+    cart: cartWith(['bistro_fries', 3]),
+    check: (r) => r.actions.length === 0 && /negative|must be|positive|can't process/i.test(r.assistantMessage),
+  },
+  {
+    label: 'BUG4c: "Make it negative" single-item cart → actions: [], error message',
+    input: 'Make it negative',
+    cart: cartWith(['spicy_crispy_chicken', 3]),
+    check: (r) => r.actions.length === 0 && /negative|must be|positive|can't process/i.test(r.assistantMessage),
+  },
+
+  // ── ISSUE 1: "veg" shorthand → vegetarian intent ─────────────────────────────
+  {
+    label: 'VEG1: "most popular veg item" → no actions, returns Veggie Smash (top veg main)',
+    input: 'What is the most popular veg item?',
+    check: (r) =>
+      r.actions.length === 0 &&
+      /veggie smash/i.test(r.assistantMessage),
+  },
+  {
+    label: 'VEG2: "cheapest veg item" → no actions, cheapest vegetarian item',
+    input: 'What is the cheapest veg item?',
+    check: (r) =>
+      r.actions.length === 0 &&
+      /\$4\.49|garden side salad|salad/i.test(r.assistantMessage),
+  },
+  {
+    label: 'VEG3: "recommend a veg meal" → no actions, recommends vegetarian item',
+    input: 'Recommend a veg meal',
+    check: (r) =>
+      r.actions.length === 0 &&
+      /veggie smash|bistro fries|salad|mac|onion rings/i.test(r.assistantMessage),
+  },
+  {
+    label: 'VEG4: "what veg options do you have" → no actions, mentions veggie items',
+    input: 'What veg options do you have?',
+    check: (r) =>
+      r.actions.length === 0 &&
+      /veggie|vegetarian/i.test(r.assistantMessage),
+  },
+  {
+    label: 'VEG5: "I want something veg" → no actions, suggests vegetarian',
+    input: 'I want something veg',
+    check: (r) =>
+      r.actions.length === 0 &&
+      /veggie smash|vegetarian/i.test(r.assistantMessage),
+  },
+  {
+    label: 'VEG6: "veggie" shorthand also works — "most popular veggie item" → Veggie Smash',
+    input: 'What is the most popular veggie item?',
+    check: (r) =>
+      r.actions.length === 0 &&
+      /veggie smash/i.test(r.assistantMessage),
+  },
+
+  // ── ISSUE 2: Quantity-only follow-up resolves to last recommendation ──────────
+  {
+    label: 'QTY1: "Add 2" after single recommendation → ADD_ITEM qty 2',
+    input: 'Add 2',
+    history: [
+      { role: 'user', text: 'Recommend something spicy' },
+      { role: 'assistant', text: 'Our top spicy pick is the 🌶️ Spicy Crispy Chicken ($14.99) — Want me to add it?' },
+    ],
+    check: (r) =>
+      r.actions.length === 1 &&
+      r.actions[0].type === 'ADD_ITEM' &&
+      (r.actions[0] as any).itemId === 'spicy_crispy_chicken' &&
+      (r.actions[0] as any).quantity === 2,
+  },
+  {
+    label: 'QTY2: "2 please" after single recommendation → ADD_ITEM qty 2',
+    input: '2 please',
+    history: [
+      { role: 'user', text: 'Recommend something spicy' },
+      { role: 'assistant', text: 'Our top spicy pick is the 🌶️ Spicy Crispy Chicken ($14.99) — Want me to add it?' },
+    ],
+    check: (r) =>
+      r.actions.length === 1 &&
+      r.actions[0].type === 'ADD_ITEM' &&
+      (r.actions[0] as any).itemId === 'spicy_crispy_chicken' &&
+      (r.actions[0] as any).quantity === 2,
+  },
+  {
+    label: 'QTY3: "Add two" after recommendation → ADD_ITEM qty 2',
+    input: 'Add two',
+    history: [
+      { role: 'user', text: 'What is your most popular item?' },
+      { role: 'assistant', text: 'Our most popular item is the 🍔 Classic Smash Burger ($13.99) — Want me to add it?' },
+    ],
+    check: (r) =>
+      r.actions.length === 1 &&
+      r.actions[0].type === 'ADD_ITEM' &&
+      (r.actions[0] as any).itemId === 'classic_smash' &&
+      (r.actions[0] as any).quantity === 2,
+  },
+  {
+    label: 'QTY4: "Sure add 2" after recommendation → ADD_ITEM qty 2',
+    input: 'Sure add 2',
+    history: [
+      { role: 'user', text: 'Recommend something spicy' },
+      { role: 'assistant', text: 'Our top spicy pick is the 🌶️ Spicy Crispy Chicken ($14.99) — Want me to add it?' },
+    ],
+    check: (r) =>
+      r.actions.length === 1 &&
+      r.actions[0].type === 'ADD_ITEM' &&
+      (r.actions[0] as any).itemId === 'spicy_crispy_chicken' &&
+      (r.actions[0] as any).quantity === 2,
+  },
+  {
+    label: 'QTY5: "Let me get 2" after recommendation → ADD_ITEM qty 2',
+    input: 'Let me get 2',
+    history: [
+      { role: 'user', text: 'Recommend something spicy' },
+      { role: 'assistant', text: 'Our top spicy pick is the 🌶️ Spicy Crispy Chicken ($14.99) — Want me to add it?' },
+    ],
+    check: (r) =>
+      r.actions.length === 1 &&
+      r.actions[0].type === 'ADD_ITEM' &&
+      (r.actions[0] as any).itemId === 'spicy_crispy_chicken' &&
+      (r.actions[0] as any).quantity === 2,
+  },
+  {
+    label: 'QTY6: "Add 2" with NO history → falls through, no affirmative resolution',
+    input: 'Add 2',
+    check: (r) => r.actions.length === 0, // no item to resolve — unknown intent
+  },
+  {
+    label: 'QTY7: "Add 2" after multi-item message → no affirmative (ambiguous)',
+    input: 'Add 2',
+    history: [
+      { role: 'user', text: "What's spicy?" },
+      { role: 'assistant', text: 'Our spicy options are 🌶️ Spicy Crispy Chicken and 🌯 Buffalo Chicken Wrap.' },
+    ],
+    check: (r) => r.actions.length === 0, // cannot resolve — two items in history
+  },
+  {
+    label: 'QTY8: "Add 2 spicy chickens" (explicit item) → ADD_ITEM ignores affirmative path',
+    input: 'Add 2 spicy chickens',
+    history: [
+      { role: 'user', text: 'What is your most popular item?' },
+      { role: 'assistant', text: 'Our most popular item is the 🍔 Classic Smash Burger ($13.99) — Want me to add it?' },
+    ],
+    check: (r) =>
+      r.actions.length === 1 &&
+      r.actions[0].type === 'ADD_ITEM' &&
+      (r.actions[0] as any).itemId === 'spicy_crispy_chicken' &&
+      (r.actions[0] as any).quantity === 2,
+  },
 ];
 
 let passed = 0;

@@ -193,7 +193,7 @@ function hasRemoveIntent(lower: string): boolean {
   return REMOVE_VERB_RE.test(lower) || IMPLICIT_REMOVE_RE.test(lower);
 }
 
-function parseRemove(lower: string, cartItems: CartItem[]): ParseOrderResponse | null {
+function parseRemove(lower: string, cartItems: CartItem[], history: ConversationTurn[] = []): ParseOrderResponse | null {
   // Extract text after the triggering verb/phrase
   let afterVerb = lower;
   const hardVerbMatch = lower.match(/\b(?:remove|delete|take\s+(?:off|away)|cancel|drop)\b\s*(.*)/i);
@@ -208,14 +208,68 @@ function parseRemove(lower: string, cartItems: CartItem[]): ParseOrderResponse |
 
   const removeAll = /\ball\b/.test(lower) || /\beverything\b/.test(lower);
 
-  // Prefer matching against cart items (more reliable than full menu)
-  const cartMatch = findCartItem(afterVerb || lower, cartItems);
-  const item = cartMatch?.menuItem ?? findItem(afterVerb || lower);
+  // ── Multi-item removal ("Remove 2 waters and 2 fries") ──────────────────────
+  const multiSegments = afterVerb
+    .split(/\s*(?:\band\b|,|&|\bplus\b)\s*/i)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  if (multiSegments.length > 1) {
+    const actions: ParseOrderResponse['actions'] = [];
+    const removedLabels: string[] = [];
+
+    for (const seg of multiSegments) {
+      const segTokens = seg.split(/\s+/);
+      const segText = segTokens
+        .filter((t) => NUMBER_WORDS[t.toLowerCase()] === undefined && isNaN(parseInt(t, 10)))
+        .join(' ')
+        .trim();
+
+      const cm = findCartItem(segText || seg, cartItems);
+      if (!cm) continue;
+
+      const explicitSegQty = hasExplicitQty(segTokens);
+      if (removeAll || !explicitSegQty) {
+        actions.push({ type: 'REMOVE_ITEM', itemId: cm.menuItem.id });
+        removedLabels.push(cm.menuItem.name);
+      } else {
+        const qty = parseQuantityFromTokens(segTokens);
+        if (qty >= cm.quantity) {
+          actions.push({ type: 'REMOVE_ITEM', itemId: cm.menuItem.id });
+          removedLabels.push(cm.menuItem.name);
+        } else {
+          actions.push({ type: 'DECREMENT_ITEM', itemId: cm.menuItem.id, quantity: qty });
+          removedLabels.push(`${qty}× ${cm.menuItem.name}`);
+        }
+      }
+    }
+
+    if (actions.length > 0) {
+      const summary =
+        removedLabels.length === 1
+          ? removedLabels[0]
+          : `${removedLabels.slice(0, -1).join(', ')} and ${removedLabels[removedLabels.length - 1]}`;
+      return { actions, assistantMessage: `Removed ${summary} from your cart.` };
+    }
+    return null;
+  }
+
+  // ── Single-item removal ───────────────────────────────────────────────────
+  let cartMatch = findCartItem(afterVerb || lower, cartItems);
+  let item = cartMatch?.menuItem ?? findItem(afterVerb || lower);
+
+  // If text-based lookup failed, fall back to the last item mentioned in conversation history
+  if (!item && history.length > 0) {
+    const historyItem = extractLastSuggestedItem(history);
+    if (historyItem) {
+      const histCartMatch = cartItems.find((ci) => ci.menuItem.id === historyItem.id);
+      if (histCartMatch) { item = historyItem; cartMatch = histCartMatch; }
+    }
+  }
 
   if (!item) return null;
 
   // Item identified but not present in the cart — nothing to remove.
-  // Return null so the caller responds with "not in your cart".
   if (!cartMatch) return null;
 
   if (removeAll) {
@@ -249,7 +303,6 @@ function parseRemove(lower: string, cartItems: CartItem[]): ParseOrderResponse |
     };
   }
 
-  // No qty — full removal
   return {
     actions: [{ type: 'REMOVE_ITEM', itemId: item.id }],
     assistantMessage: `Done — removed ${item.name} from your cart.`,
@@ -258,24 +311,32 @@ function parseRemove(lower: string, cartItems: CartItem[]): ParseOrderResponse |
 
 // ─── Context-aware commands ───────────────────────────────────────────────────
 
-function handleContextCommand(lower: string, cartItems: CartItem[]): ParseOrderResponse | null {
-  // "add one more", "another one", "same thing again", "add another"
-  if (
-    /\b(one\s+more|another\s+(?:one|of\s+(?:the\s+)?same)|same\s+(thing\s+)?again|add\s+(?:one\s+)?more|add\s+another(?!\s+\w))\b/i.test(
-      lower
-    )
-  ) {
-    if (cartItems.length === 0) {
+function handleContextCommand(lower: string, cartItems: CartItem[], history: ConversationTurn[] = []): ParseOrderResponse | null {
+  // "add one more", "add 1 more", "add 5 more", "another one", "same thing again"
+  const addMoreRe = /\b(?:add\s+)?(?:(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+)?more\b|\banother(?:\s+one)?\b(?!\s+\w)|\bsame\s+(?:thing\s+)?again\b/i;
+  if (addMoreRe.test(lower) && !hasRemoveIntent(lower)) {
+    const cleaned = lower
+      .replace(/\b(add|more|another|one|two|three|four|five|six|seven|eight|nine|ten|\d+|the|a|an|of|same|again|thing|please)\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!(cleaned.length > 1 && findItem(cleaned))) {
+      const qtyMatch = lower.match(/\b(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+more\b/i);
+      const qty = qtyMatch ? parseQuantityFromTokens([qtyMatch[1]]) : 1;
+      const target =
+        cartItems.length > 0
+          ? cartItems[cartItems.length - 1].menuItem
+          : extractLastSuggestedItem(history);
+      if (!target) {
+        return { actions: [], assistantMessage: "Your cart is empty — what would you like to add first?" };
+      }
       return {
-        actions: [],
-        assistantMessage: "Your cart is empty — what would you like to add first?",
+        actions: [{ type: 'ADD_ITEM', itemId: target.id, quantity: qty, modifiers: [] }],
+        assistantMessage:
+          qty === 1
+            ? `Added another ${target.name} to your cart! 🛒`
+            : `Added ${qty}× more ${target.name} to your cart! 🛒`,
       };
     }
-    const last = cartItems[cartItems.length - 1];
-    return {
-      actions: [{ type: 'ADD_ITEM', itemId: last.menuItem.id, quantity: 1, modifiers: [] }],
-      assistantMessage: `Added another ${last.menuItem.name} to your cart! 🛒`,
-    };
   }
 
   // "only one [item]", "just one [item]" → UPDATE_QUANTITY 1
@@ -297,6 +358,9 @@ function handleContextCommand(lower: string, cartItems: CartItem[]): ParseOrderR
     /\b(?:actually\s+)?(?:make\s+(?:it|that|the\s+\w+|my)|change\s+(?:it|that|the\s+\w+)\s+to|set\s+(?:it|that|the\s+\w+)\s+to)\s+(\w+)/
   );
   if (makeMatch) {
+    if (makeMatch[1].toLowerCase() === 'negative') {
+      return { actions: [], assistantMessage: 'Quantities must be 1 or more.' };
+    }
     const qty = parseQuantityFromTokens([makeMatch[1]]);
 
     // Check if a named item is in the message (strip the update phrase first)
@@ -390,7 +454,11 @@ function handleQuestion(lower: string, cartItems: CartItem[]): ParseOrderRespons
   }
 
   // ── Spicy / heat questions: "is X spicy?", "how spicy is X?", "is it hot?" ──
-  if (/\b(is|how)\b.*(spicy|hot)\b|\b(spicy|hot)\b.*\b(is|are)\b|\bhow\s+much\s+(heat|spice)\b/.test(lower)) {
+  // Guard: let superlative/filter queries ("cheapest spicy item") fall to filter pipeline
+  if (
+    !/\bcheapest\b|least\s+expensive|most\s+affordable|most\s+expensive|under\s+\$|\bitems?\b/i.test(lower) &&
+    /\b(is|how)\b.*(spicy|hot)\b|\b(spicy|hot)\b.*\b(is|are)\b|\bhow\s+much\s+(heat|spice)\b/.test(lower)
+  ) {
     const item = findItem(lower);
     if (item) {
       const spicy = isSpicy(item);
@@ -414,8 +482,8 @@ function handleQuestion(lower: string, cartItems: CartItem[]): ParseOrderRespons
   // ── Filter pipeline ─────────────────────────────────────────────────────────
   // Detect every constraint in the query, then intersect them.
   const wantsSpicy    = /\bspicy\b|hot\s*food|\bhot\b/.test(lower);
-  const wantsVeg      = /\bvegetarian\b|\bvegan\b|plant.based|no\s*meat|meatless/.test(lower);
-  const wantsPopular  = /\bpopular\b|\bbestseller\b|best\s*seller|most\s*(ordered|liked|loved|popular)|what('s| is) good/.test(lower);
+  const wantsVeg      = /\bvegetarian\b|\bvegan\b|\bveg\b|\bveggie\b|plant.based|no\s*meat|meatless/.test(lower);
+  const wantsPopular  = /\bpopular\b|\bbestseller\b|best\s*seller|most\s*(ordered|liked|loved|popular)|what('s| is) good|\bbest\s+item\b|\btop\s+item\b/.test(lower);
   const wantsDrinks   = /\bdrinks?\b|\bbeverages?\b|something to drink/.test(lower);
   const wantsDesserts = /\bdesserts?\b|\bsweets?\b|something sweet/.test(lower);
   const wantsSides    = /\bsides?\b|\bstarters?\b/.test(lower);
@@ -440,8 +508,34 @@ function handleQuestion(lower: string, cartItems: CartItem[]): ParseOrderRespons
     if (wantsDrinks)   { pool = pool.filter((i) => i.category === 'drinks');   labels.push('drink'); }
     if (wantsDesserts) { pool = pool.filter((i) => i.category === 'desserts'); labels.push('dessert'); }
     if (wantsSides)    { pool = pool.filter((i) => i.category === 'sides');    labels.push('side'); }
-    if (wantsPopular)  { pool = pool.filter((i) => i.popular);                 labels.push('popular'); }
     if (maxPrice !== null) { pool = pool.filter((i) => i.price < maxPrice); }
+
+    // Singular pick fires BEFORE popular filter so e.g. "most popular veg item" returns
+    // the best vegetarian main (Veggie Smash) rather than the only popular+veg side (Bistro Fries).
+    // Sort: main courses (burgers/sandwiches) first, then popular items, then by price.
+    const wantsSinglePick =
+      wantsPopular &&
+      /\bmost\s+popular\b|\bbest\s+(?:item|seller)\b|\btop\s+(?:item|pick)\b|\bnumber\s+one\b/i.test(lower);
+    if (wantsSinglePick && pool.length > 0) {
+      const sorted = [...pool].sort((a, b) => {
+        const isMain = (i: MenuItem) => i.category === 'burgers' || i.category === 'sandwiches';
+        if (isMain(a) && !isMain(b)) return -1;
+        if (!isMain(a) && isMain(b)) return 1;
+        if (a.popular && !b.popular) return -1;
+        if (!a.popular && b.popular) return 1;
+        return a.price - b.price;
+      });
+      const item = sorted[0];
+      const qualifier = labels.length > 0 ? `${labels.join(' and ')} ` : '';
+      return {
+        intent: 'MENU_QUESTION' as const,
+        actions: [],
+        assistantMessage: `Our most popular ${qualifier}item is the ${item.imageEmoji} ${item.name} (${fmt(item.price)}) — ${item.description} Want me to add it?`,
+      };
+    }
+
+    // Popular filter for multi-result paths (not single-pick)
+    if (wantsPopular) { pool = pool.filter((i) => i.popular); labels.push('popular'); }
 
     const ctx = labels.join(' and ');
 
@@ -494,16 +588,6 @@ function handleQuestion(lower: string, cartItems: CartItem[]): ParseOrderRespons
       };
     }
 
-    // List results — single result gets a more specific nudge
-    if (pool.length === 1) {
-      const item = pool[0];
-      return {
-        intent: 'MENU_QUESTION' as const,
-        actions: [],
-        assistantMessage: `Our only ${ctx} option is ${item.imageEmoji} ${item.name} (${fmt(item.price)}) — ${item.description} Want me to add it?`,
-      };
-    }
-
     const list = pool.map((i) => `${i.imageEmoji} ${i.name} (${fmt(i.price)})`).join(', ');
     const opener = ctx ? `Our ${ctx} options` : 'Here\'s what we have';
     const cta = wantsDrinks ? 'Which one can I add?' : 'Want me to add one?';
@@ -538,7 +622,7 @@ function handleQuestion(lower: string, cartItems: CartItem[]): ParseOrderRespons
 
 function buildBudgetMeal(lower: string, budget: number): ParseOrderResponse {
   const wantsSpicy = /spicy|hot\s*food|heat/.test(lower);
-  const wantsVeg = /vegetarian|vegan|plant.based|no\s*meat/.test(lower);
+  const wantsVeg = /\bvegetarian\b|\bvegan\b|\bveg\b|\bveggie\b|plant.based|no\s*meat/.test(lower);
 
   function mainQualifies(item: MenuItem): boolean {
     if (wantsSpicy) return isSpicy(item);
@@ -615,8 +699,8 @@ function handleRecommendation(lower: string): ParseOrderResponse | null {
     };
   }
 
-  // "Recommend something vegetarian" (without a budget)
-  if (/recommend\s+(something\s+)?vegetarian|suggest\s+(something\s+)?veg/.test(lower)) {
+  // "Recommend/want/crave something vegetarian/veg/veggie" (without a budget)
+  if (/(?:recommend|suggest)\s+(?:something\s+)?(?:vegetarian|vegan|veg(?:gie)?)|(?:want|craving|in\s+the\s+mood\s+for|looking\s+for)\s+(?:a\s+|an\s+|some\s+|something\s+)?(?:vegetarian|vegan|veg(?:gie)?)\b/.test(lower)) {
     const items = MENU_ITEMS.filter(isVegetarian).filter((i) => i.popular || i.category === 'burgers');
     const top = items[0] ?? MENU_ITEMS.filter(isVegetarian)[0];
     if (top) {
@@ -627,17 +711,30 @@ function handleRecommendation(lower: string): ParseOrderResponse | null {
     }
   }
 
-  // "Recommend a popular item", "what should I order", "what's good"
+  // "Recommend a popular item", "what should I order", "recommend something spicy"
   if (
     /recommend|what should (i|we) (order|get|try)|what('s| is) (good|great|your (best|top))|surprise me/.test(
       lower
     )
   ) {
-    const popular = MENU_ITEMS.filter((i) => i.popular);
-    const pick = popular[Math.floor(Math.random() * popular.length)] ?? popular[0];
+    const wantsSpicy = /\bspicy\b|\bhot\b/.test(lower);
+    const wantsVeg = /\bvegetarian\b|\bvegan\b|\bveg\b|\bveggie\b/.test(lower);
+
+    let pool: MenuItem[];
+    if (wantsSpicy) {
+      pool = MENU_ITEMS.filter(isSpicy);
+    } else if (wantsVeg) {
+      pool = MENU_ITEMS.filter(isVegetarian).filter((i) => i.popular || i.category === 'burgers');
+      if (pool.length === 0) pool = MENU_ITEMS.filter(isVegetarian);
+    } else {
+      pool = MENU_ITEMS.filter((i) => i.popular);
+    }
+
+    const pick = pool[Math.floor(Math.random() * pool.length)] ?? pool[0];
+    const qualifier = wantsSpicy ? 'spicy ' : wantsVeg ? 'vegetarian ' : '';
     return {
       actions: [],
-      assistantMessage: `A customer favourite is the ${pick.imageEmoji} ${pick.name} (${fmt(pick.price)}) — ${pick.description} Want me to add it?`,
+      assistantMessage: `Our top ${qualifier}pick is the ${pick.imageEmoji} ${pick.name} (${fmt(pick.price)}) — ${pick.description} Want me to add it?`,
     };
   }
 
@@ -674,6 +771,36 @@ function resolvePronouns(msg: string, history: ConversationTurn[]): string {
   return msg.replace(/\b(those|them|it|that)\b/gi, item.name);
 }
 
+// ─── Affirmative follow-up ────────────────────────────────────────────────────
+
+// Handles short affirmations after a single-item recommendation.
+// "Sure" / "I'll take 2" / "Yes please" → ADD_ITEM for the last suggested item.
+// Uses an end-anchor so "I'll take 2 burgers" (explicit item) falls through to normal parse.
+function handleAffirmativeFollowUp(lower: string, history: ConversationTurn[]): ParseOrderResponse | null {
+  if (history.length === 0) return null;
+
+  const isAffirmative =
+    /^(?:(?:i'?ll|i\s+will)\s+(?:take|get|have)(?:\s+(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten))?|yes(?:\s+please)?|yes\s+add\s+it|sure(?:\s+please|[,.]?\s+add\s+(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten))?|ok(?:ay)?|that\s+sounds?\s+(?:great|good|perfect)|sounds?\s+(?:great|good|perfect)|add\s+(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|another(?:\s+one)?)|let\s+me\s+(?:get|have|take)\s+(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)|(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+please)\s*[.!?]*$/i.test(
+      lower.trim()
+    );
+
+  if (!isAffirmative) return null;
+
+  const item = extractLastSuggestedItem(history);
+  if (!item) return null;
+
+  const qtyMatch = lower.match(/\b(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\b/i);
+  const qty = qtyMatch ? parseQuantityFromTokens([qtyMatch[1]]) : 1;
+
+  return {
+    actions: [{ type: 'ADD_ITEM', itemId: item.id, quantity: qty, modifiers: [] }],
+    assistantMessage:
+      qty === 1
+        ? `Added ${item.name} to your cart! 🛒`
+        : `Added ${qty}× ${item.name} to your cart! 🛒`,
+  };
+}
+
 // ─── Main export ──────────────────────────────────────────────────────────────
 
 export function fallbackParse(
@@ -684,6 +811,14 @@ export function fallbackParse(
   const resolved = history.length > 0 ? resolvePronouns(message.trim(), history) : message.trim();
   const msg = resolved;
   const lower = msg.toLowerCase();
+
+  // 0. Universal negative-quantity guard — fires before any action logic
+  if (/\bnegative\s+\d+\b|\s-\d+\b/i.test(lower)) {
+    return {
+      actions: [],
+      assistantMessage: "I can't process negative quantities — please tell me how many you'd like!",
+    };
+  }
 
   // 1. Clear cart (before generic remove so "clear everything" doesn't partially match)
   if (
@@ -701,9 +836,13 @@ export function fallbackParse(
   const cartQuery = handleCartQuery(lower, cartItems);
   if (cartQuery) return cartQuery;
 
+  // 2.5. Affirmative follow-up ("Sure", "I'll take 2", "Yes please" after a single-item recommendation)
+  const followUp = handleAffirmativeFollowUp(lower, history);
+  if (followUp) return followUp;
+
   // 3. Remove / decrement — hard guard: NEVER fall through to ADD_ITEM if remove intent present
   if (hasRemoveIntent(lower)) {
-    const result = parseRemove(lower, cartItems);
+    const result = parseRemove(lower, cartItems, history);
     if (result) return result;
     return {
       actions: [],
@@ -713,7 +852,7 @@ export function fallbackParse(
   }
 
   // 4. Context-aware commands ("make it 2", "add one more", "same again")
-  const ctx = handleContextCommand(lower, cartItems);
+  const ctx = handleContextCommand(lower, cartItems, history);
   if (ctx) return ctx;
 
   // 5. Explicit update with item named ("set fries to 2", "change chicken to 3")
@@ -722,6 +861,9 @@ export function fallbackParse(
   );
   if (updateMatch) {
     const itemText = updateMatch[1];
+    if (updateMatch[2].toLowerCase() === 'negative') {
+      return { actions: [], assistantMessage: 'Quantities must be 1 or more.' };
+    }
     const qty = parseQuantityFromTokens([updateMatch[2]]);
     const item = findItem(itemText);
     if (item) {
@@ -767,6 +909,11 @@ export function fallbackParse(
   // 8. Non-budget recommendations ("I want something spicy", "what's good")
   const rec = handleRecommendation(lower);
   if (rec) return rec;
+
+  // 8b. Negative-quantity guard — "make water negative 3", "set fries to -2"
+  if (/\b(?:make|set|change|update)\b.+\bnegative\b/i.test(lower) || /\b(?:make|set|change|update)\b.+\s-\d+/.test(lower)) {
+    return { actions: [], assistantMessage: 'Quantities must be 1 or more.' };
+  }
 
   // 9. Add item(s)
   const addMatch = lower.match(

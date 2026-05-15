@@ -3,12 +3,12 @@ import { Text, View, Animated } from 'react-native';
 import { useEffect, useRef } from 'react';
 import { useCartStore } from '../../store/cartStore';
 
-function TabIcon({ emoji, label, focused }: { emoji: string; label: string; focused: boolean }) {
-  const translateY = useRef(new Animated.Value(0)).current;
+function TabIcon({ emoji, label, focused, restOffset = 0 }: { emoji: string; label: string; focused: boolean; restOffset?: number }) {
+  const translateY = useRef(new Animated.Value(restOffset)).current;
 
   useEffect(() => {
     Animated.spring(translateY, {
-      toValue: focused ? -5 : 0,
+      toValue: focused ? -5 : restOffset,
       tension: 280,
       friction: 16,
       useNativeDriver: true,
@@ -145,7 +145,7 @@ export default function TabsLayout() {
         name="chat"
         options={{
           tabBarIcon: ({ focused }) => (
-            <TabIcon emoji="🤖" label="AI Order" focused={focused} />
+            <TabIcon emoji="🤖" label="AI Order" focused={focused} restOffset={8} />
           ),
         }}
       />

@@ -37,7 +37,7 @@ export const MENU_ITEMS: MenuItem[] = [
     description: 'Black bean & quinoa patty, avocado, pico de gallo, chipotle mayo.',
     price: 12.99,
     category: 'burgers',
-    tags: ['vegetarian', 'vegan-option'],
+    tags: ['vegetarian', 'vegan-option', 'spicy'],
     imageEmoji: '🥑',
   },
   // Sandwiches
