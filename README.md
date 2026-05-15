@@ -6,7 +6,7 @@ A full-stack AI-powered restaurant ordering app built with React Native, Expo, a
 
 ## Demo
 
-> 📹 *Loom walkthrough:* `[link]`
+> 📹 *Loom walkthrough:* [https://www.loom.com/share/3fb113c1d157429596282695e7310965](https://www.loom.com/share/3fb113c1d157429596282695e7310965)
 
 <!-- Screenshots: drop images here -->
 | Menu | Cart | AI Ordering |
