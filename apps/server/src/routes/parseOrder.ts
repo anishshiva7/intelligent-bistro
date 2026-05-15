@@ -35,6 +35,12 @@ export function shouldUseDeterministicParser(message: string): boolean {
     return true;
   }
 
+  if (
+    /\b(ready to checkout|ready to check out|i am ready to checkout|i'm ready to checkout|i am done|i'm done|that should be it|that is it|that's it|that should do it|that should do|i am finished|i'm finished)\b/.test(lower)
+  ) {
+    return true;
+  }
+
   return false;
 }
 

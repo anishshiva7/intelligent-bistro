@@ -28,6 +28,16 @@ const cases: Case[] = [
     expected: true,
   },
   {
+    label: 'checkout-ready phrase uses deterministic parser',
+    input: 'Ready to checkout',
+    expected: true,
+  },
+  {
+    label: 'done phrase uses deterministic parser',
+    input: 'That should be it',
+    expected: true,
+  },
+  {
     label: 'recommendation can still use AI path',
     input: 'Recommend something spicy',
     expected: false,

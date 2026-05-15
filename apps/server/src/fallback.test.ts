@@ -370,6 +370,30 @@ const cases: Case[] = [
       r.actions[0].type === 'UPDATE_QUANTITY' &&
       (r.actions[0] as any).quantity === 1,
   },
+  {
+    label: 'REGRESSION: "Ready to checkout" → no actions, tells user to go to cart',
+    input: 'Ready to checkout',
+    cart: cartWith(['spicy_crispy_chicken', 1], ['craft_lemonade', 1]),
+    check: (r) =>
+      r.actions.length === 0 &&
+      /go to the cart/i.test(r.assistantMessage) &&
+      /\$/.test(r.assistantMessage),
+  },
+  {
+    label: 'REGRESSION: "That should be it" → no actions, tells user to go to cart',
+    input: 'That should be it',
+    cart: cartWith(['spicy_crispy_chicken', 1]),
+    check: (r) =>
+      r.actions.length === 0 &&
+      /go to the cart/i.test(r.assistantMessage),
+  },
+  {
+    label: 'REGRESSION: "I am done" empty cart → no actions, asks to add items first',
+    input: 'I am done',
+    check: (r) =>
+      r.actions.length === 0 &&
+      /cart is empty/i.test(r.assistantMessage),
+  },
 
   // ── Regression: remove item not in cart → no action, helpful message ─────────
   {

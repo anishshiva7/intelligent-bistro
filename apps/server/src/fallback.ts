@@ -293,6 +293,26 @@ function handleCartQuery(lower: string, cartItems: CartItem[]): ParseOrderRespon
   };
 }
 
+function handleCheckoutIntent(lower: string, cartItems: CartItem[]): ParseOrderResponse | null {
+  const isCheckoutIntent =
+    /\b(ready to checkout|ready to check out|i am ready to checkout|i'm ready to checkout|i am done|i'm done|that should be it|that is it|that's it|that should do it|that should do|i am finished|i'm finished)\b/.test(lower);
+
+  if (!isCheckoutIntent) return null;
+
+  if (cartItems.length === 0) {
+    return {
+      actions: [],
+      assistantMessage: "Your cart is empty right now — add a few items first, then head to Cart when you're ready to order.",
+    };
+  }
+
+  const { total } = cartTotal(cartItems);
+  return {
+    actions: [],
+    assistantMessage: `You're all set. Go to the Cart tab to place your order. Your total is ${fmt(total)}.`,
+  };
+}
+
 // ─── Remove / decrement helpers ───────────────────────────────────────────────
 
 // Hard-remove verbs — unambiguous
@@ -955,6 +975,10 @@ export function fallbackParse(
   // 2. Cart inspection
   const cartQuery = handleCartQuery(lower, cartItems);
   if (cartQuery) return cartQuery;
+
+  // 2.25. Checkout-ready confirmations
+  const checkoutIntent = handleCheckoutIntent(lower, cartItems);
+  if (checkoutIntent) return checkoutIntent;
 
   // 2.5. Affirmative follow-up ("Sure", "I'll take 2", "Yes please" after a single-item recommendation)
   const followUp = handleAffirmativeFollowUp(lower, history);
