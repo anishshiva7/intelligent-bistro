@@ -309,7 +309,7 @@ function handleCartQuery(lower: string, cartItems: CartItem[]): ParseOrderRespon
 
 function handleCheckoutIntent(lower: string, cartItems: CartItem[]): ParseOrderResponse | null {
   const isCheckoutIntent =
-    /\b(ready to checkout|ready to check out|i am ready to checkout|i'm ready to checkout|i am done|i'm done|that should be it|that is it|that's it|that should do it|that should do|i am finished|i'm finished)\b/.test(lower);
+    /\b(ready to checkout|ready to check out|i am ready to checkout|i'm ready to checkout|i would like to checkout|i'd like to checkout|i want to checkout|i want to check out|i am done|i'm done|that should be it|that is it|that's it|that should do it|that should do|i am finished|i'm finished)\b/.test(lower);
 
   if (!isCheckoutIntent) return null;
 
@@ -901,6 +901,11 @@ function extractLastSuggestedItem(history: ConversationTurn[]): MenuItem | null 
   return matches.length === 1 ? matches[0] : null;
 }
 
+function extractLastAssistantText(history: ConversationTurn[]): string | null {
+  const lastAssistant = [...history].reverse().find((t) => t.role === 'assistant');
+  return lastAssistant?.text ?? null;
+}
+
 // Rewrites pronoun-heavy messages like "10 of those" → "Add 10 Buffalo Chicken Wrap"
 // when the previous assistant turn mentioned exactly one item.
 function resolvePronouns(msg: string, history: ConversationTurn[]): string {
@@ -922,6 +927,51 @@ function resolvePronouns(msg: string, history: ConversationTurn[]): string {
 }
 
 // ─── Affirmative follow-up ────────────────────────────────────────────────────
+
+function handleBinaryQuestionFollowUp(
+  lower: string,
+  cartItems: CartItem[],
+  history: ConversationTurn[]
+): ParseOrderResponse | null {
+  if (history.length === 0) return null;
+
+  const trimmed = lower.trim();
+  const isYes = /^(yes(?:\s+please)?|yep|yeah|sure|ok(?:ay)?|please do)\s*[.!?]*$/i.test(trimmed);
+  const isNo = /^(no(?:\s+thanks)?|nope|not now)\s*[.!?]*$/i.test(trimmed);
+  if (!isYes && !isNo) return null;
+
+  const lastAssistant = extractLastAssistantText(history)?.toLowerCase() ?? '';
+
+  if (/ready to place your order|go to the cart tab to place your order|ready to checkout/.test(lastAssistant)) {
+    if (isYes) {
+      if (cartItems.length === 0) {
+        return {
+          actions: [],
+          assistantMessage: "Your cart is empty right now — add a few items first, then head to Cart when you're ready to order.",
+        };
+      }
+      const { total } = cartTotal(cartItems);
+      return {
+        actions: [],
+        assistantMessage: `Perfect — go to the Cart tab to place your order. Your total is ${fmt(total)}.`,
+      };
+    }
+
+    return {
+      actions: [],
+      assistantMessage: "No problem — we can keep building your order. What would you like to add next?",
+    };
+  }
+
+  if (/want me to add it|want me to add one/.test(lastAssistant) && isNo) {
+    return {
+      actions: [],
+      assistantMessage: "No problem — what would you like instead?",
+    };
+  }
+
+  return null;
+}
 
 // Handles short affirmations after a single-item recommendation.
 // "Sure" / "I'll take 2" / "Yes please" → ADD_ITEM for the last suggested item.
@@ -993,6 +1043,10 @@ export function fallbackParse(
   // 2.25. Checkout-ready confirmations
   const checkoutIntent = handleCheckoutIntent(lower, cartItems);
   if (checkoutIntent) return checkoutIntent;
+
+  // 2.4. Yes/no follow-up for the last assistant question
+  const binaryFollowUp = handleBinaryQuestionFollowUp(lower, cartItems, history);
+  if (binaryFollowUp) return binaryFollowUp;
 
   // 2.5. Affirmative follow-up ("Sure", "I'll take 2", "Yes please" after a single-item recommendation)
   const followUp = handleAffirmativeFollowUp(lower, history);

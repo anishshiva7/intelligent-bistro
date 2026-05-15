@@ -398,6 +398,15 @@ const cases: Case[] = [
       /go to the cart/i.test(r.assistantMessage),
   },
   {
+    label: 'REGRESSION: "I would like to checkout" → no actions, tells user to go to cart',
+    input: 'I would like to checkout',
+    cart: cartWith(['veggie_smash', 2]),
+    check: (r) =>
+      r.actions.length === 0 &&
+      /go to the cart/i.test(r.assistantMessage) &&
+      /\$/.test(r.assistantMessage),
+  },
+  {
     label: 'REGRESSION: "I am done" empty cart → no actions, asks to add items first',
     input: 'I am done',
     check: (r) =>
@@ -731,6 +740,42 @@ const cases: Case[] = [
       r.actions.length === 1 &&
       r.actions[0].type === 'ADD_ITEM' &&
       (r.actions[0] as any).itemId === 'classic_smash',
+  },
+  {
+    label: 'ISSUE1b: "No" after recommendation → no actions, declines add',
+    input: 'No',
+    history: [
+      { role: 'user', text: 'Recommend something' },
+      { role: 'assistant', text: 'Our top pick is the 🥖 Cuban Pressed ($13.49) — Want me to add it?' },
+    ],
+    check: (r) =>
+      r.actions.length === 0 &&
+      /no problem|what would you like instead/i.test(r.assistantMessage),
+  },
+  {
+    label: 'FOLLOWUP: "Yes" after total prompt → go to cart guidance',
+    input: 'Yes',
+    cart: cartWith(['bistro_fries', 4]),
+    history: [
+      { role: 'user', text: "What's my total?" },
+      { role: 'assistant', text: 'Your current total is $21.71 ($19.96 + $1.75 tax). Ready to place your order?' },
+    ],
+    check: (r) =>
+      r.actions.length === 0 &&
+      /go to the cart tab to place your order/i.test(r.assistantMessage) &&
+      /\$21\.71/.test(r.assistantMessage),
+  },
+  {
+    label: 'FOLLOWUP: "No" after total prompt → continue shopping guidance',
+    input: 'No',
+    cart: cartWith(['bistro_fries', 4]),
+    history: [
+      { role: 'user', text: "What's my total?" },
+      { role: 'assistant', text: 'Your current total is $21.71 ($19.96 + $1.75 tax). Ready to place your order?' },
+    ],
+    check: (r) =>
+      r.actions.length === 0 &&
+      /keep building your order|what would you like to add next/i.test(r.assistantMessage),
   },
   {
     label: 'ISSUE1b: "That sounds good" after recommendation → ADD_ITEM',

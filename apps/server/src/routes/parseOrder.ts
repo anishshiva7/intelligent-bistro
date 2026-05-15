@@ -8,8 +8,12 @@ import { fallbackParse } from '../fallback';
 const router = Router();
 const client = new Anthropic();
 
-export function shouldUseDeterministicParser(message: string): boolean {
+export function shouldUseDeterministicParser(
+  message: string,
+  conversationHistory: Array<{ role: 'user' | 'assistant'; text: string }> = []
+): boolean {
   const lower = message.toLowerCase().trim();
+  const lastAssistant = [...conversationHistory].reverse().find((turn) => turn.role === 'assistant')?.text.toLowerCase() ?? '';
 
   if (
     /^(add|get|order|give me|let me get|i want|i'd like|i would like|throw in|can you add|can i (get|have))\b/.test(lower)
@@ -36,7 +40,14 @@ export function shouldUseDeterministicParser(message: string): boolean {
   }
 
   if (
-    /\b(ready to checkout|ready to check out|i am ready to checkout|i'm ready to checkout|i am done|i'm done|that should be it|that is it|that's it|that should do it|that should do|i am finished|i'm finished)\b/.test(lower)
+    /\b(ready to checkout|ready to check out|i am ready to checkout|i'm ready to checkout|i would like to checkout|i'd like to checkout|i want to checkout|i want to check out|i am done|i'm done|that should be it|that is it|that's it|that should do it|that should do|i am finished|i'm finished)\b/.test(lower)
+  ) {
+    return true;
+  }
+
+  if (
+    /^(yes(?:\s+please)?|yep|yeah|sure|ok(?:ay)?|please do|no(?:\s+thanks)?|nope|not now)\s*[.!?]*$/.test(lower) &&
+    /ready to place your order|go to the cart tab to place your order|ready to checkout|want me to add it|want me to add one/.test(lastAssistant)
   ) {
     return true;
   }
@@ -54,7 +65,7 @@ router.post('/', async (req: Request, res: Response) => {
   const { message, cartItems, conversationHistory } = parsed.data;
   const deterministicResult = fallbackParse(message, cartItems, conversationHistory);
 
-  if (!process.env.ANTHROPIC_API_KEY || shouldUseDeterministicParser(message)) {
+  if (!process.env.ANTHROPIC_API_KEY || shouldUseDeterministicParser(message, conversationHistory ?? [])) {
     res.json(deterministicResult);
     return;
   }
